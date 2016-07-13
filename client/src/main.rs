@@ -30,8 +30,8 @@ fn main() {
                       .arg(Arg::with_name("SERVER")
                                .short("S")
                                .long("server")
+                               .default_value("q.emqtt.com:1883")
                                .takes_value(true)
-                               .required(true)
                                .help("MQTT server address (host:port)"))
                       .arg(Arg::with_name("SUBSCRIBE")
                                .short("s")
@@ -64,7 +64,6 @@ fn main() {
     let channel_filters: Vec<(TopicFilter, QualityOfService)> =
         matches.values_of("SUBSCRIBE")
                .unwrap()
-               .iter()
                .map(|c| {
                    (TopicFilter::new_checked(c.to_string()).unwrap(),
                     QualityOfService::Level0)
@@ -98,7 +97,6 @@ fn main() {
 
     let channels: Vec<TopicName> = matches.values_of("SUBSCRIBE")
                                           .unwrap()
-                                          .iter()
                                           .map(|c| TopicName::new(c.to_string()).unwrap())
                                           .collect();
 
