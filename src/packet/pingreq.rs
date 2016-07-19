@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use control::{FixedHeader, PacketType, ControlType};
 use packet::{Packet, PacketError};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct PingreqPacket {
     fixed_header: FixedHeader,
     payload: (),

@@ -11,7 +11,7 @@ use topic_name::{TopicName, TopicNameError};
 use {Encodable, Decodable};
 use encodable::StringEncodeError;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ConnectPacket {
     fixed_header: FixedHeader,
     protocol_name: ProtocolName,
@@ -186,7 +186,7 @@ impl<'a> Packet<'a> for ConnectPacket {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ConnectPacketPayload {
     client_identifier: String,
     will_topic: Option<TopicName>,

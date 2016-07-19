@@ -19,7 +19,7 @@ pub enum SubscribeReturnCode {
     Failure             = 0x80,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SubackPacket {
     fixed_header: FixedHeader,
     packet_identifier: PacketIdentifier,
@@ -82,7 +82,7 @@ impl<'a> Packet<'a> for SubackPacket {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SubackPacketPayload {
     subscribes: Vec<SubscribeReturnCode>,
 }

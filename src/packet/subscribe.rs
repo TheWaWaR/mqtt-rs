@@ -13,7 +13,7 @@ use {Encodable, Decodable, QualityOfService};
 use encodable::StringEncodeError;
 use topic_filter::{TopicFilter, TopicFilterError};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SubscribePacket {
     fixed_header: FixedHeader,
     packet_identifier: PacketIdentifier,
@@ -76,7 +76,7 @@ impl<'a> Packet<'a> for SubscribePacket {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct SubscribePacketPayload {
     subscribes: Vec<(TopicFilter, QualityOfService)>,
 }

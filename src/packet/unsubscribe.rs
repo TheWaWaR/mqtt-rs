@@ -12,7 +12,7 @@ use packet::{Packet, PacketError};
 use {Encodable, Decodable};
 use encodable::StringEncodeError;
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct UnsubscribePacket {
     fixed_header: FixedHeader,
     packet_identifier: PacketIdentifier,
@@ -75,7 +75,7 @@ impl<'a> Packet<'a> for UnsubscribePacket {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct UnsubscribePacketPayload {
     subscribes: Vec<String>,
 }

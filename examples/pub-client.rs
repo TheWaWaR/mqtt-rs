@@ -61,16 +61,6 @@ fn main() {
     let client_id = matches.value_of("CLIENT_ID")
                            .map(|x| x.to_owned())
                            .unwrap_or_else(generate_client_id);
-    let channel_filters: Vec<(TopicFilter, QualityOfService)> =
-        matches.values_of("SUBSCRIBE")
-               .unwrap()
-               .iter()
-               .map(|c| {
-                   (TopicFilter::new_checked(c.to_string()).unwrap(),
-                    QualityOfService::Level0)
-               })
-               .collect();
-
     print!("Connecting to {:?} ... ", server_addr);
     let mut stream = TcpStream::connect(server_addr).unwrap();
     println!("Connected!");
@@ -89,6 +79,16 @@ fn main() {
         panic!("Failed to connect to server, return code {:?}",
                connack.connect_return_code());
     }
+
+    let channel_filters: Vec<(TopicFilter, QualityOfService)> =
+        matches.values_of("SUBSCRIBE")
+               .unwrap()
+               .iter()
+               .map(|c| {
+                   (TopicFilter::new_checked(c.to_string()).unwrap(),
+                    QualityOfService::Level0)
+               })
+               .collect();
 
     println!("Applying channel filters {:?} ...", channel_filters);
     let sub = SubscribePacket::new(10, channel_filters);

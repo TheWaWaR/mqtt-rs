@@ -6,7 +6,7 @@ use control::variable_header::{ConnackFlags, ConnectReturnCode};
 use packet::{Packet, PacketError};
 use {Encodable, Decodable};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub struct ConnackPacket {
     fixed_header: FixedHeader,
     flags: ConnackFlags,

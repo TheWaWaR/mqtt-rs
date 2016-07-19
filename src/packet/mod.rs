@@ -171,7 +171,7 @@ impl<'a, T: Packet<'a>> From<TopicNameError> for PacketError<'a, T> {
 
 macro_rules! impl_variable_packet {
     ($($name:ident & $errname:ident => $hdr:ident,)+) => {
-        #[derive(Debug, Eq, PartialEq)]
+        #[derive(Debug, Eq, PartialEq, Clone)]
         pub enum VariablePacket {
             $(
                 $name($name),
