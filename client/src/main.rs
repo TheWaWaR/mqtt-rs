@@ -32,20 +32,20 @@ use mqtt::control::variable_header::ConnectReturnCode;
 use mqtt::{TopicFilter, TopicName};
 
 #[derive(Clone)]
-struct MyCompleter {
-    commands: Vec<&'static str>
+struct MyCompleter<'a> {
+    commands: &'a Vec<&'static str>
 }
 
-impl MyCompleter {
-    pub fn new(commands: Vec<&'static str>) -> MyCompleter {
+impl<'a> MyCompleter<'a> {
+    pub fn new(commands: &'a Vec<&'static str>) -> MyCompleter<'a> {
         MyCompleter{commands:commands}
     }
 }
 
-impl Completer for MyCompleter {
+impl<'a> Completer for MyCompleter<'a> {
     fn complete(&self, line: &str, _: usize) -> rustyline::Result<(usize, Vec<String>)> {
         let mut results: Vec<String> = Vec::new();
-        for c in &self.commands {
+        for c in self.commands {
             if c.starts_with(line) {
                 results.push(c.to_string());
             }
@@ -54,8 +54,16 @@ impl Completer for MyCompleter {
     }
 }
 
+
+
+enum UnsubscribeTopic {
+    Normal(String),
+    All
+}
+
 struct LocalStatus{
     last_pingresp: Option<time::Tm>,
+    subscribes: Vec<(TopicFilter, QualityOfService)>,
     counts: HashMap<String, usize>
 }
 
@@ -65,7 +73,8 @@ impl fmt::Debug for LocalStatus {
             Some(v) => format!("{}", v.strftime("%Y-%m-%d %H:%M:%S").unwrap()),
             None => "None".to_string()
         };
-        write!(fmt, "LastPingresp=[{}], Counts={:?}", pingresp_str , self.counts)
+        write!(fmt, "LastPingresp=[{}], Subscribes={:?}, Counts={:?}",
+               pingresp_str , self.subscribes, self.counts)
     }
 }
 
@@ -73,17 +82,22 @@ type LocalCount = usize;
 type LocalMessages = Option<Vec<PublishPacket>>;
 
 enum Action {
-    // Subscribe(TopicName, QualityOfService),
-    Publish(String),
+    Subscribe(TopicFilter, QualityOfService),
+    UnSubscribe(UnsubscribeTopic),
+    Publish(TopicName, String),
     Receive(VariablePacket),
     Status(Sender<LocalStatus>),
     // TopicMessageCount(TopicName, Sender<usize>),
-    Pull(TopicName, usize, Sender<LocalMessages>)
+    Get(TopicName, usize, Sender<LocalMessages>)
 }
 
 
 fn generate_client_id() -> String {
     format!("/MQTT/rust/{}", Uuid::new_v4().to_simple_string())
+}
+
+fn print_error(s: &str) {
+    println!("{}: {}", Red.paint("[Error]"), s);
 }
 
 fn main() {
@@ -97,13 +111,13 @@ fn main() {
                                .default_value("q.emqtt.com:1883")
                                .takes_value(true)
                                .help("MQTT server address (host:port)"))
-                      .arg(Arg::with_name("SUBSCRIBE")
-                               .short("s")
-                               .long("subscribe")
-                               .takes_value(true)
-                               .multiple(true)
-                               .required(true)
-                               .help("Channel filter to subscribe"))
+                      // .arg(Arg::with_name("SUBSCRIBE")
+                      //          .short("s")
+                      //          .long("subscribe")
+                      //          .takes_value(true)
+                      //          .multiple(true)
+                      //          .required(true)
+                      //          .help("Channel filter to subscribe"))
                       .arg(Arg::with_name("USER_NAME")
                                .short("u")
                                .long("username")
@@ -148,25 +162,25 @@ fn main() {
                connack.connect_return_code());
     }
 
-    let channel_filters: Vec<(TopicFilter, QualityOfService)> =
-        matches.values_of("SUBSCRIBE")
-               .unwrap()
-               .map(|c| {
-                   (TopicFilter::new_checked(c.to_string()).unwrap(),
-                    QualityOfService::Level0)
-               })
-               .collect();
+    // let channel_filters: Vec<(TopicFilter, QualityOfService)> =
+    //     matches.values_of("SUBSCRIBE")
+    //            .unwrap()
+    //            .map(|c| {
+    //                (TopicFilter::new_checked(c.to_string()).unwrap(),
+    //                 QualityOfService::Level0)
+    //            })
+    //            .collect();
 
-    println!("Applying channel filters {:?} ...", channel_filters);
-    let sub = SubscribePacket::new(10, channel_filters);
-    let mut buf = Vec::new();
-    sub.encode(&mut buf).unwrap();
-    stream.write_all(&buf[..]).unwrap();
+    // println!("Applying channel filters {:?} ...", channel_filters);
+    // let sub = SubscribePacket::new(10, channel_filters);
+    // let mut buf = Vec::new();
+    // sub.encode(&mut buf).unwrap();
+    // stream.write_all(&buf[..]).unwrap();
 
-    let channels: Vec<TopicName> = matches.values_of("SUBSCRIBE")
-        .unwrap()
-        .map(|c| TopicName::new(c.to_string()).unwrap())
-        .collect();
+    // let channels: Vec<TopicName> = matches.values_of("SUBSCRIBE")
+    //     .unwrap()
+    //     .map(|c| TopicName::new(c.to_string()).unwrap())
+    //     .collect();
 
 
     let (tx, rx) = channel::<Action>();
@@ -217,21 +231,44 @@ fn main() {
     let mut cloned_stream = stream.try_clone().unwrap();
     thread::spawn(move || {
         // println!("Processing messages!!!!!");
+        let mut pkid: u16 = 0;
         let mut last_pingresp:Option<time::Tm> = None;
-        // let mut subscribes: Vec<(TopicFilter, QualityOfService)> = Vec::new();
+        let mut subscribes: Vec<(TopicFilter, QualityOfService)> = Vec::new();
         let mut mailbox: HashMap<TopicName, LinkedList<PublishPacket>> = HashMap::new();
+
+        let mut get_pkid = || {
+            pkid += 1;
+            pkid
+        };
+
         // Action process loop
         loop {
             let action = rx.recv().unwrap();
             match action {
-                Action::Publish(msg) => {
-                    for chan in channels.iter() {
-                        let publish_packet = PublishPacket::new(
-                            chan.clone(), QoSWithPacketIdentifier::Level0, msg.as_bytes().to_vec());
-                        let mut buf = Vec::new();
-                        publish_packet.encode(&mut buf).unwrap();
-                        cloned_stream.write_all(&buf[..]).unwrap();
-                    }
+                Action::Publish(topic_name, msg) => {
+                    let publish_packet = PublishPacket::new(
+                        topic_name.clone(), QoSWithPacketIdentifier::Level0, msg.as_bytes().to_vec());
+                    let mut buf = Vec::new();
+                    publish_packet.encode(&mut buf).unwrap();
+                    cloned_stream.write_all(&buf[..]).unwrap();
+                }
+                Action::Subscribe(topic_filter, qos) => {
+                    let sub = SubscribePacket::new(get_pkid(), vec![(topic_filter.clone(), qos)]);
+                    let mut buf = Vec::new();
+                    sub.encode(&mut buf).unwrap();
+                    cloned_stream.write_all(&buf[..]).unwrap();
+                    subscribes.push((topic_filter, qos));
+                }
+                Action::UnSubscribe(unsub_topic) => {
+                    let topics = match unsub_topic {
+                        UnsubscribeTopic::Normal(topic) => {
+                            vec![topic]
+                        }
+                        UnsubscribeTopic::All => {
+                            let mut topics: Vec<String> = Vec::new();
+                            topics
+                        }
+                    };
                 }
                 Action::Receive(packet) => {
                     match &packet {
@@ -274,6 +311,7 @@ fn main() {
                     }
                     let _ = sender.send(LocalStatus{
                         last_pingresp: last_pingresp,
+                        subscribes: subscribes.clone(),
                         counts: counts
                     });
                 }
@@ -284,7 +322,7 @@ fn main() {
                 //         let _ = sender.send(0);
                 //     }
                 // }
-                Action::Pull(topic_name, count, sender) => {
+                Action::Get(topic_name, count, sender) => {
                     if let Some(ref mut messages) = mailbox.get_mut(&topic_name) {
                         let mut msgs = Vec::new();
                         let count = if messages.len() > count { count } else { messages.len() };
@@ -309,8 +347,8 @@ fn main() {
     // let (count_sender, count_receiver) = channel::<LocalCount>();
     let (message_sender, message_receiver) = channel::<LocalMessages>();
 
-    let commands = vec!["status", "pull", "publish", "exit"];
-    let completer = MyCompleter::new(commands.clone());
+    let commands = vec!["status", "get", "subscribe", "unsubscribe", "publish", "help", "exit"];
+    let completer = MyCompleter::new(&commands);
     let mut rl = Editor::new();
     rl.set_completer(Some(&completer));
     for c in &commands {
@@ -331,62 +369,124 @@ fn main() {
                 process::exit(0);
             },
             Err(err) => {
-                println!("{}: {:?}", Red.paint("[Error]"), err);
+                print_error(&format!("{:?}", err));
                 process::exit(-1);
             }
         };
 
         let command = readline.trim();
-        let parts: Vec<&str> = command.split_whitespace().collect();
+        let parts: Vec<&str> = command.splitn(2, ' ').collect();
         if let Some(action) = parts.first() {
             match action {
                 &"status" => {
                     let _ = tx.send(Action::Status(status_sender.clone()));
                     let status = status_receiver.recv().unwrap();
                     println!("{}: {:?}", Green.paint("[Status]"), status);
+                    rl.add_history_entry(&command);
                 }
-                &"pull" => {
-                    let topic_name = TopicName::new("abc".to_string()).unwrap();
-                    let count: usize = if parts.len() > 1 {
-                        parts[1].parse().unwrap_or(1)
-                    } else { 1 };
-                    let _ = tx.send(Action::Pull(topic_name, count, message_sender.clone()));
-                    let rv = message_receiver.recv().unwrap();
-                    if let Some(messages) = rv {
-                        let mut message_strs: Vec<String> = Vec::new();
-                        for msg in messages {
-                            message_strs.push(String::from_utf8(msg.payload().to_owned()).unwrap())
+                &"get" => {
+                    if parts.len() > 1 {
+                        let arg_parts: Vec<&str> = parts[1].split(' ').collect();
+                        let topic_str = arg_parts[0];
+
+                        let topic_name = TopicName::new(topic_str.to_string()).unwrap();
+                        let count: usize = if arg_parts.len() > 1 {
+                            let count_str = arg_parts[1];
+                            count_str.parse().unwrap_or(1)
+                        } else { 1 };
+                        println!("{}: topic={}, count={}", Green.paint("[Get]"), &topic_name[..], count);
+                        let _ = tx.send(Action::Get(topic_name, count, message_sender.clone()));
+                        let rv = message_receiver.recv().unwrap();
+                        if let Some(messages) = rv {
+                            let mut message_strs: Vec<String> = Vec::new();
+                            for msg in messages {
+                                message_strs.push(String::from_utf8(msg.payload().to_owned()).unwrap())
+                            }
+                            println!("{}: {:?}", Green.paint("[Messages]"), message_strs);
+                        } else {
+                            println!("{}: None", Green.paint("[Messages]"));
                         }
-                        println!("{}: {:?}", Green.paint("[Messages]"), message_strs);
+                        rl.add_history_entry(&command);
                     } else {
-                        println!("{}: None", Green.paint("[Messages]"));
+                        print_error("topic missing!");
+                    }
+                }
+                &"subscribe" => {
+                    if parts.len() > 1 {
+                        let args = parts[1].trim();
+                        match TopicFilter::new_checked(args.to_string()) {
+                            Ok(topic_filter) => {
+                                let _ = tx.send(Action::Subscribe(topic_filter, QualityOfService::Level0));
+                                rl.add_history_entry(&command);
+                            }
+                            Err(err) => {
+                                print_error(&format!("{:?}", err))
+                            }
+                        }
+                    } else {
+                        print_error("Topic filter required!");
+                    }
+                }
+                &"unsubscribe" => {
+                    if parts.len() > 1 {
+                        let args = parts[1].trim();
+                        if args == "all" {
+                            let _ = tx.send(Action::UnSubscribe(UnsubscribeTopic::All));
+                        } else {
+                            let _ = tx.send(Action::UnSubscribe(UnsubscribeTopic::Normal(args.to_string())));
+                            // match TopicFilter::new_checked(args.to_string()) {
+                            //     Ok(topic_filter) => {}
+                            //     Err(err) => {
+                            //         print_error(&format!("{:?}", err))
+                            //     }
+                            // }
+                        }
+                        rl.add_history_entry(&command);
+                    } else {
+                        print_error("Topic filter required!");
                     }
                 }
                 &"publish" => {
                     if parts.len() > 1 {
-                        println!("{}: {}", Green.paint("[Publishing]"), parts[1]);
-                        let _ = tx.send(Action::Publish(parts[1].to_string()));
+                        let args = parts[1].trim();
+                        let arg_parts: Vec<&str> = args.split(' ').collect();
+                        if arg_parts.len() > 1 {
+                            println!("{}: topic={}, message={}", Green.paint("[Publishing]"),
+                                     arg_parts[0], arg_parts[1]);
+
+                            let topic_name = TopicName::new(arg_parts[0].to_string()).unwrap();
+                            let _ = tx.send(Action::Publish(topic_name, arg_parts[1].to_string()));
+                            rl.add_history_entry(&command);
+                        } else {
+                            print_error("message missing!");
+                        }
                     } else {
-                        println!("{}: message missing!", Red.paint("[Error]"));
+                        print_error("not enough arguments!");
                     }
+                }
+                &"help" => {
+                    println!("* {status}                     Query mqtt status information \n\
+                              * {get} TOPIC [COUNT]          Get some messages from a topic \n\
+                              * {subscribe} TOPIC [QOS]      Subscribe a topic \n\
+                              * {unsubscribe} TOPIC          UnSubscribe a topic (can be `all`) \n\
+                              * {publish} MESSAGE            Publish a message \n\
+                              * {help}                       Print help \n\
+                              * {exit}                       Exit this program",
+                             status=Green.bold().paint(commands[0]),
+                             get=Green.bold().paint(commands[1]),
+                             subscribe=Green.bold().paint(commands[2]),
+                             unsubscribe=Green.bold().paint(commands[3]),
+                             publish=Green.bold().paint(commands[4]),
+                             help=Green.bold().paint(commands[5]),
+                             exit=Green.bold().paint(commands[6])
+                    );
                 }
                 &"exit" => {
                     println!("{}", Green.paint("[Bye!]"));
                     process::exit(0);
                 }
-                &"help" => {
-                    println!("* {}                     Query mqtt status information\n\
-                              * {} [COUNT]               Pull some messages\n\
-                              * {} MESSAGE            Publish a message\n\
-                              * {}                       Exit this program",
-                             Green.bold().paint(commands[0]),
-                             Green.bold().paint(commands[1]),
-                             Green.bold().paint(commands[2]),
-                             Green.bold().paint(commands[3])
-                    );
-                }
                 _ => {
-                    println!("{}: {}", Red.paint("[Unknown]"), command);
+                    print_error("Unknown command!");
                 }
             }
         }
