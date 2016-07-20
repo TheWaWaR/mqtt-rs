@@ -31,13 +31,15 @@ use mqtt::packet::*;
 use mqtt::control::variable_header::ConnectReturnCode;
 use mqtt::{TopicFilter, TopicName};
 
-const CMD_STATUS: &'static str = "status";
-const CMD_GET: &'static str = "get";
-const CMD_SUBSCRIBE: &'static str = "subscribe";
-const CMD_UNSUBSCRIBE: &'static str = "unsubscribe";
-const CMD_PUBLISH: &'static str = "publish";
-const CMD_HELP: &'static str = "help";
-const CMD_EXIT: &'static str = "exit";
+
+const CMD_STATUS      : &'static str = "status";
+const CMD_GET         : &'static str = "get";
+const CMD_SUBSCRIBE   : &'static str = "subscribe";
+const CMD_UNSUBSCRIBE : &'static str = "unsubscribe";
+const CMD_PUBLISH     : &'static str = "publish";
+const CMD_HELP        : &'static str = "help";
+const CMD_EXIT        : &'static str = "exit";
+
 
 #[derive(Clone)]
 struct MyCompleter<'a> {
@@ -61,7 +63,6 @@ impl<'a> Completer for MyCompleter<'a> {
         Ok((0, results))
     }
 }
-
 
 
 enum UnsubscribeTopic {
@@ -169,27 +170,6 @@ fn main() {
         panic!("Failed to connect to server, return code {:?}",
                connack.connect_return_code());
     }
-
-    // let channel_filters: Vec<(TopicFilter, QualityOfService)> =
-    //     matches.values_of("SUBSCRIBE")
-    //            .unwrap()
-    //            .map(|c| {
-    //                (TopicFilter::new_checked(c.to_string()).unwrap(),
-    //                 QualityOfService::Level0)
-    //            })
-    //            .collect();
-
-    // println!("Applying channel filters {:?} ...", channel_filters);
-    // let sub = SubscribePacket::new(10, channel_filters);
-    // let mut buf = Vec::new();
-    // sub.encode(&mut buf).unwrap();
-    // stream.write_all(&buf[..]).unwrap();
-
-    // let channels: Vec<TopicName> = matches.values_of("SUBSCRIBE")
-    //     .unwrap()
-    //     .map(|c| TopicName::new(c.to_string()).unwrap())
-    //     .collect();
-
 
     let (tx, rx) = channel::<Action>();
     let cloned_tx = tx.clone();
