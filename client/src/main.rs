@@ -5,16 +5,24 @@ extern crate env_logger;
 extern crate clap;
 extern crate uuid;
 extern crate time;
+extern crate ansi_term;
+extern crate rustyline;
 
 use std::net::TcpStream;
 use std::io::{self, Write};
 use std::collections::{HashMap, LinkedList};
 use std::sync::mpsc::{channel, Sender, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::process;
+use std::time::{Duration};
 use std::str;
+use std::fmt;
 
 use clap::{App, Arg};
+use ansi_term::Colour::{Green, Blue, Red};
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
+use rustyline::completion::{Completer};
 
 use uuid::Uuid;
 
@@ -23,18 +31,54 @@ use mqtt::packet::*;
 use mqtt::control::variable_header::ConnectReturnCode;
 use mqtt::{TopicFilter, TopicName};
 
+#[derive(Clone)]
+struct MyCompleter {
+    commands: Vec<&'static str>
+}
 
-type LocalStatus = HashMap<String, usize>;
+impl MyCompleter {
+    pub fn new(commands: Vec<&'static str>) -> MyCompleter {
+        MyCompleter{commands:commands}
+    }
+}
+
+impl Completer for MyCompleter {
+    fn complete(&self, line: &str, pos: usize) -> rustyline::Result<(usize, Vec<String>)> {
+        let mut results: Vec<String> = Vec::new();
+        for c in &self.commands {
+            if c.starts_with(line) {
+                results.push(c.to_string());
+            }
+        }
+        Ok((0, results))
+    }
+}
+
+struct LocalStatus{
+    last_pingresp: Option<time::Tm>,
+    counts: HashMap<String, usize>
+}
+
+impl fmt::Debug for LocalStatus {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let pingresp_str = match self.last_pingresp {
+            Some(v) => format!("{}", v.strftime("%Y-%m-%d %H:%M:%S").unwrap()),
+            None => "None".to_string()
+        };
+        write!(fmt, "LastPingresp=[{}], Counts={:?}", pingresp_str , self.counts)
+    }
+}
+
 type LocalCount = usize;
 type LocalMessages = Option<Vec<PublishPacket>>;
 
 enum Action {
     // Subscribe(TopicName, QualityOfService),
-    // Publish(TopicName, QualityOfService),
+    Publish(String),
     Receive(VariablePacket),
     Status(Sender<LocalStatus>),
     TopicMessageCount(TopicName, Sender<usize>),
-    PullMessages(TopicName, usize, Sender<LocalMessages>)
+    Pull(TopicName, usize, Sender<LocalMessages>)
 }
 
 
@@ -83,6 +127,7 @@ fn main() {
                            .unwrap_or_else(generate_client_id);
 
     print!("Connecting to {:?} ... ", server_addr);
+    io::stdout().flush().unwrap();
     let mut stream = TcpStream::connect(server_addr).unwrap();
     println!("Connected!");
 
@@ -118,6 +163,11 @@ fn main() {
     sub.encode(&mut buf).unwrap();
     stream.write_all(&buf[..]).unwrap();
 
+    let channels: Vec<TopicName> = matches.values_of("SUBSCRIBE")
+        .unwrap()
+        .map(|c| TopicName::new(c.to_string()).unwrap())
+        .collect();
+
 
     let (tx, rx) = channel::<Action>();
     let cloned_tx = tx.clone();
@@ -130,7 +180,7 @@ fn main() {
         loop {
             let current_timestamp = time::get_time().sec;
             if keep_alive > 0 && current_timestamp >= next_ping_time {
-                println!("Sending PINGREQ to broker");
+                // println!("Sending PINGREQ to broker");
 
                 let pingreq_packet = PingreqPacket::new();
 
@@ -148,7 +198,7 @@ fn main() {
     // Receive packets
     let mut cloned_stream = stream.try_clone().unwrap();
     thread::spawn(move || {
-        println!("Receiving messages!!!!!");
+        // println!("Receiving messages!!!!!");
         loop {
             thread::sleep(Duration::new(1, 0));
             let packet = match VariablePacket::decode(&mut cloned_stream) {
@@ -166,13 +216,23 @@ fn main() {
     // Process actions
     let mut cloned_stream = stream.try_clone().unwrap();
     thread::spawn(move || {
-        println!("Processing messages!!!!!");
+        // println!("Processing messages!!!!!");
+        let mut last_pingresp:Option<time::Tm> = None;
         let mut subscribes: Vec<(TopicFilter, QualityOfService)> = Vec::new();
         let mut mailbox: HashMap<TopicName, LinkedList<PublishPacket>> = HashMap::new();
         // Action process loop
         loop {
             let action = rx.recv().unwrap();
             match action {
+                Action::Publish(msg) => {
+                    for chan in channels.iter() {
+                        let publish_packet = PublishPacket::new(
+                            chan.clone(), QoSWithPacketIdentifier::Level0, msg.as_bytes().to_vec());
+                        let mut buf = Vec::new();
+                        publish_packet.encode(&mut buf).unwrap();
+                        cloned_stream.write_all(&buf[..]).unwrap();
+                    }
+                }
                 Action::Receive(packet) => {
                     match &packet {
                         &VariablePacket::PublishPacket(ref packet) => {
@@ -189,7 +249,8 @@ fn main() {
                             pingresp.encode(&mut cloned_stream).unwrap();
                         }
                         &VariablePacket::PingrespPacket(..) => {
-                            println!("Receiving PINGRESP from broker ..");
+                            // println!("Receiving PINGRESP from broker ..");
+                            last_pingresp = Some(time::now());
                         }
                         &VariablePacket::SubscribePacket(ref packet) => {
                             info!("Subscribe packet received: {:?}", packet.payload().subscribes());
@@ -207,11 +268,14 @@ fn main() {
                     }
                 }
                 Action::Status(sender) => {
-                    let mut result = HashMap::new();
+                    let mut counts = HashMap::new();
                     for (topic, ref msgs) in &mailbox {
-                        result.insert(topic.to_string(), msgs.len());
+                        counts.insert(topic.to_string(), msgs.len());
                     }
-                    let _ = sender.send(result);
+                    let _ = sender.send(LocalStatus{
+                        last_pingresp: last_pingresp,
+                        counts: counts
+                    });
                 }
                 Action::TopicMessageCount(topic_name, sender) => {
                     if let Some(ref messages) = mailbox.get(&topic_name) {
@@ -220,7 +284,7 @@ fn main() {
                         let _ = sender.send(0);
                     }
                 }
-                Action::PullMessages(topic_name, count, sender) => {
+                Action::Pull(topic_name, count, sender) => {
                     if let Some(ref mut messages) = mailbox.get_mut(&topic_name) {
                         let mut msgs = Vec::new();
                         let count = if messages.len() > count { count } else { messages.len() };
@@ -245,35 +309,86 @@ fn main() {
     let (count_sender, count_receiver) = channel::<LocalCount>();
     let (message_sender, message_receiver) = channel::<LocalMessages>();
 
-    let stdin = io::stdin();
+    let commands = vec!["status", "pull", "publish", "exit"];
+    let completer = MyCompleter::new(commands.clone());
+    let mut rl = Editor::new();
+    rl.set_completer(Some(&completer));
+    for c in &commands {
+        rl.add_history_entry(&c);
+    }
+
     loop {
         io::stdout().flush().unwrap();
 
-        let mut line = String::new();
-        stdin.read_line(&mut line).unwrap();
+        let readline = match rl.readline(format!("{} ", Blue.paint("mqttc>")).as_ref()) {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted) => {
+                println!("{}", Green.paint("CTRL-C"));
+                process::exit(0);
+            },
+            Err(ReadlineError::Eof) => {
+                println!("{}", Green.paint("CTRL-D"));
+                process::exit(0);
+            },
+            Err(err) => {
+                println!("{}: {:?}", Red.paint("[Error]"), err);
+                process::exit(-1);
+            }
+        };
 
-        let command = line.trim();
-        println!("[Input]: {}", command);
+        let command = readline.trim();
         let parts: Vec<&str> = command.split_whitespace().collect();
         if let Some(action) = parts.first() {
             match action {
                 &"status" => {
                     let _ = tx.send(Action::Status(status_sender.clone()));
                     let status = status_receiver.recv().unwrap();
-                    println!("[Status]: {:?}", status);
+                    println!("{}: {:?}", Green.paint("[Status]"), status);
                 }
-                &"messages" => {
+                &"pull" => {
                     let topic_name = TopicName::new("abc".to_string()).unwrap();
-                    let _ = tx.send(Action::PullMessages(topic_name, 1, message_sender.clone()));
-                    let messages = message_receiver.recv().unwrap();
-                    println!("[Message]: {:?}", messages);
+                    let count: usize = if parts.len() > 1 {
+                        parts[1].parse().unwrap_or(1)
+                    } else { 1 };
+                    let _ = tx.send(Action::Pull(topic_name, count, message_sender.clone()));
+                    let rv = message_receiver.recv().unwrap();
+                    if let Some(messages) = rv {
+                        let mut message_strs: Vec<String> = Vec::new();
+                        for msg in messages {
+                            message_strs.push(String::from_utf8(msg.payload().to_owned()).unwrap())
+                        }
+                        println!("{}: {:?}", Green.paint("[Messages]"), message_strs);
+                    } else {
+                        println!("{}: None", Green.paint("[Messages]"));
+                    }
+                }
+                &"publish" => {
+                    if parts.len() > 1 {
+                        println!("{}: {}", Green.paint("[Publishing]"), parts[1]);
+                        let _ = tx.send(Action::Publish(parts[1].to_string()));
+                    } else {
+                        println!("{}: message missing!", Red.paint("[Error]"));
+                    }
+                }
+                &"exit" => {
+                    println!("{}", Green.paint("[Bye!]"));
+                    process::exit(0);
+                }
+                &"help" => {
+                    println!("* {}                     Query mqtt status information\n\
+                              * {} [COUNT]               Pull some messages\n\
+                              * {} MESSAGE            Publish a message\n\
+                              * {}                       Exit this program",
+                             Green.bold().paint(commands[0]),
+                             Green.bold().paint(commands[1]),
+                             Green.bold().paint(commands[2]),
+                             Green.bold().paint(commands[3])
+                    );
                 }
                 _ => {
-                    println!("[Unknown command]: {}", command);
+                    println!("{}: {}", Red.paint("[Unknown]"), command);
                 }
             }
-        } else {
-            println!("[Empty command]");
         }
     }
 }
