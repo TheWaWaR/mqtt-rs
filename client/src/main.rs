@@ -11,7 +11,7 @@ extern crate rustyline;
 use std::net::TcpStream;
 use std::io::{self, Write};
 use std::collections::{HashMap, LinkedList};
-use std::sync::mpsc::{channel, Sender, Receiver};
+use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::process;
 use std::time::{Duration};
@@ -43,7 +43,7 @@ impl MyCompleter {
 }
 
 impl Completer for MyCompleter {
-    fn complete(&self, line: &str, pos: usize) -> rustyline::Result<(usize, Vec<String>)> {
+    fn complete(&self, line: &str, _: usize) -> rustyline::Result<(usize, Vec<String>)> {
         let mut results: Vec<String> = Vec::new();
         for c in &self.commands {
             if c.starts_with(line) {
@@ -77,7 +77,7 @@ enum Action {
     Publish(String),
     Receive(VariablePacket),
     Status(Sender<LocalStatus>),
-    TopicMessageCount(TopicName, Sender<usize>),
+    // TopicMessageCount(TopicName, Sender<usize>),
     Pull(TopicName, usize, Sender<LocalMessages>)
 }
 
@@ -218,7 +218,7 @@ fn main() {
     thread::spawn(move || {
         // println!("Processing messages!!!!!");
         let mut last_pingresp:Option<time::Tm> = None;
-        let mut subscribes: Vec<(TopicFilter, QualityOfService)> = Vec::new();
+        // let mut subscribes: Vec<(TopicFilter, QualityOfService)> = Vec::new();
         let mut mailbox: HashMap<TopicName, LinkedList<PublishPacket>> = HashMap::new();
         // Action process loop
         loop {
@@ -277,13 +277,13 @@ fn main() {
                         counts: counts
                     });
                 }
-                Action::TopicMessageCount(topic_name, sender) => {
-                    if let Some(ref messages) = mailbox.get(&topic_name) {
-                        let _ = sender.send(messages.len());
-                    } else {
-                        let _ = sender.send(0);
-                    }
-                }
+                // Action::TopicMessageCount(topic_name, sender) => {
+                //     if let Some(ref messages) = mailbox.get(&topic_name) {
+                //         let _ = sender.send(messages.len());
+                //     } else {
+                //         let _ = sender.send(0);
+                //     }
+                // }
                 Action::Pull(topic_name, count, sender) => {
                     if let Some(ref mut messages) = mailbox.get_mut(&topic_name) {
                         let mut msgs = Vec::new();
@@ -306,7 +306,7 @@ fn main() {
     });
 
     let (status_sender, status_receiver) = channel::<LocalStatus>();
-    let (count_sender, count_receiver) = channel::<LocalCount>();
+    // let (count_sender, count_receiver) = channel::<LocalCount>();
     let (message_sender, message_receiver) = channel::<LocalMessages>();
 
     let commands = vec!["status", "pull", "publish", "exit"];
