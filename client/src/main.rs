@@ -31,6 +31,14 @@ use mqtt::packet::*;
 use mqtt::control::variable_header::ConnectReturnCode;
 use mqtt::{TopicFilter, TopicName};
 
+const CMD_STATUS: &'static str = "status";
+const CMD_GET: &'static str = "get";
+const CMD_SUBSCRIBE: &'static str = "subscribe";
+const CMD_UNSUBSCRIBE: &'static str = "unsubscribe";
+const CMD_PUBLISH: &'static str = "publish";
+const CMD_HELP: &'static str = "help";
+const CMD_EXIT: &'static str = "exit";
+
 #[derive(Clone)]
 struct MyCompleter<'a> {
     commands: &'a Vec<&'static str>
@@ -347,7 +355,15 @@ fn main() {
     // let (count_sender, count_receiver) = channel::<LocalCount>();
     let (message_sender, message_receiver) = channel::<LocalMessages>();
 
-    let commands = vec!["status", "get", "subscribe", "unsubscribe", "publish", "help", "exit"];
+    let commands = vec![
+        CMD_STATUS,
+        CMD_GET,
+        CMD_SUBSCRIBE,
+        CMD_UNSUBSCRIBE,
+        CMD_PUBLISH,
+        CMD_HELP,
+        CMD_EXIT
+    ];
     let completer = MyCompleter::new(&commands);
     let mut rl = Editor::new();
     rl.set_completer(Some(&completer));
@@ -377,14 +393,14 @@ fn main() {
         let command = readline.trim();
         let parts: Vec<&str> = command.splitn(2, ' ').collect();
         if let Some(action) = parts.first() {
-            match action {
-                &"status" => {
+            match *action {
+                CMD_STATUS => {
                     let _ = tx.send(Action::Status(status_sender.clone()));
                     let status = status_receiver.recv().unwrap();
                     println!("{}: {:?}", Green.paint("[Status]"), status);
                     rl.add_history_entry(&command);
                 }
-                &"get" => {
+                CMD_GET => {
                     if parts.len() > 1 {
                         let arg_parts: Vec<&str> = parts[1].split(' ').collect();
                         let topic_str = arg_parts[0];
@@ -411,7 +427,7 @@ fn main() {
                         print_error("topic missing!");
                     }
                 }
-                &"subscribe" => {
+                CMD_SUBSCRIBE => {
                     if parts.len() > 1 {
                         let args = parts[1].trim();
                         match TopicFilter::new_checked(args.to_string()) {
@@ -427,7 +443,7 @@ fn main() {
                         print_error("Topic filter required!");
                     }
                 }
-                &"unsubscribe" => {
+                CMD_UNSUBSCRIBE => {
                     if parts.len() > 1 {
                         let args = parts[1].trim();
                         if args == "all" {
@@ -446,7 +462,7 @@ fn main() {
                         print_error("Topic filter required!");
                     }
                 }
-                &"publish" => {
+                CMD_PUBLISH => {
                     if parts.len() > 1 {
                         let args = parts[1].trim();
                         let arg_parts: Vec<&str> = args.split(' ').collect();
@@ -464,7 +480,7 @@ fn main() {
                         print_error("not enough arguments!");
                     }
                 }
-                &"help" => {
+                CMD_HELP => {
                     println!("* {status}                     Query mqtt status information \n\
                               * {get} TOPIC [COUNT]          Get some messages from a topic \n\
                               * {subscribe} TOPIC [QOS]      Subscribe a topic \n\
@@ -481,7 +497,7 @@ fn main() {
                              exit=Green.bold().paint(commands[6])
                     );
                 }
-                &"exit" => {
+                CMD_EXIT => {
                     println!("{}", Green.paint("[Bye!]"));
                     process::exit(0);
                 }
