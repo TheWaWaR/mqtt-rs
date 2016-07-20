@@ -485,7 +485,7 @@ fn main() {
                               * {get} TOPIC [COUNT]          Get some messages from a topic \n\
                               * {subscribe} TOPIC [QOS]      Subscribe a topic \n\
                               * {unsubscribe} TOPIC          UnSubscribe a topic (can be `all`) \n\
-                              * {publish} MESSAGE            Publish a message \n\
+                              * {publish} TOPIC MESSAGE      Publish message to a topic \n\
                               * {help}                       Print help \n\
                               * {exit}                       Exit this program",
                              status=Green.bold().paint(commands[0]),
