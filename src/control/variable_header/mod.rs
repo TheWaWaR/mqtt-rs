@@ -1,5 +1,6 @@
 use std::convert::From;
 use std::error::Error;
+use std::io;
 use std::fmt;
 use std::string::FromUtf8Error;
 
